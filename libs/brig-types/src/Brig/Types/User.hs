@@ -17,6 +17,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, Pair)
 import Data.ByteString.Conversion
 import Data.Id
+import Data.Int
 import Data.Json.Util ((#))
 import Data.Misc (PlainTextPassword (..))
 import Data.Maybe (isJust)
@@ -103,6 +104,8 @@ publicProfile u = (connectedProfile u)
     { profileLocale = Nothing
     }
 
+type ExpirationTime = Int64 -- TODO what should that type be?
+
 -- | The data of an existing user.
 data User = User
     { userId       :: !UserId
@@ -117,6 +120,7 @@ data User = User
         -- ^ Set if the user represents an external service,
         -- i.e. it is a "bot".
     , userHandle   :: !(Maybe Handle)
+    , userExpire   :: !(Maybe ExpirationTime)
     }
 
 userEmail :: User -> Maybe Email
@@ -168,6 +172,7 @@ instance FromJSON User where
              <*> o .:  "locale"
              <*> o .:? "service"
              <*> o .:? "handle"
+             <*> o .:? "expire"
 
 instance FromJSON UserProfile where
     parseJSON = withObject "UserProfile" $ \o ->
@@ -243,7 +248,7 @@ instance FromJSON NewUser where
           newUserTeam <- case (newUserTeamCode, newUserNewTeam, newUserPassword, newUserInvitationCode) of
                 (Just a,  Nothing, Just _, Nothing) -> return $ Just (NewTeamMember a)
                 (Nothing, Just b , Just _, Nothing) -> return $ Just (NewTeamCreator b)
-                (Nothing, Nothing,      _,       _) -> return $ Nothing
+                (Nothing, Nothing,      _,       _) -> return Nothing
                 _                                   -> fail "team_code, team, invitation_code are mutually exclusive \
                                                             \ and all team users must set a password on creation "
           return NewUser{..}
@@ -294,7 +299,7 @@ instance FromJSON BindingNewTeamUser where
     parseJSON _ = fail "parseJSON BindingNewTeamUser: must be an object"
 
 instance ToJSON BindingNewTeamUser where
-    toJSON (BindingNewTeamUser t c) = do
+    toJSON (BindingNewTeamUser t c) =
         let (Object t') = toJSON t
          in object $ "currency" .= c
                    # HashMap.toList t'

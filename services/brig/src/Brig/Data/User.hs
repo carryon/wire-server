@@ -51,6 +51,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Data.Foldable (for_)
 import Data.Id
+import Data.Int
 import Data.Misc (PlainTextPassword (..))
 import Data.UUID.V4
 import Galley.Types.Bot
@@ -85,7 +86,7 @@ newAccount u inv = do
                         Just _  -> Active
     colour        = fromMaybe defaultAccentId (newUserAccentId u)
     locale defLoc = fromMaybe defLoc (newUserLocale u)
-    user   uid l  = User uid ident name pict assets colour False l Nothing Nothing
+    user   uid l  = User uid ident name pict assets colour False l Nothing Nothing Nothing
 
 -- | Mandatory password authentication.
 authenticate :: UserId -> PlainTextPassword -> ExceptT AuthError AppIO ()
@@ -229,19 +230,21 @@ lookupAccounts usrs = do
 -- Queries
 
 type Activated = Bool
+type WriteTime a = Int64
 
 type UserRow = (UserId, Name, Maybe Pict, Maybe Email, Maybe Phone, ColourId,
-                Maybe [Asset], Activated, Maybe AccountStatus, Maybe Language,
+                Maybe [Asset], Activated, Maybe AccountStatus, Maybe (WriteTime AccountStatus), Maybe Language,
                 Maybe Country, Maybe ProviderId, Maybe ServiceId, Maybe Handle)
 
 type AccountRow = (UserId, Name, Maybe Pict, Maybe Email, Maybe Phone,
                    ColourId, Maybe [Asset], Bool, Maybe AccountStatus,
-                   Maybe Language, Maybe Country,
+                   Maybe (WriteTime AccountStatus), Maybe Language, Maybe Country,
                    Maybe ProviderId, Maybe ServiceId, Maybe Handle)
+
 
 usersSelect :: PrepQuery R (Identity [UserId]) UserRow
 usersSelect = "SELECT id, name, picture, email, phone, accent_id, assets, \
-              \activated, status, language, country, provider, service, handle \
+              \activated, status, writetime(status), language, country, provider, service, handle \
               \FROM user where id IN ?"
 
 nameSelect :: PrepQuery R (Identity UserId) (Identity Name)
@@ -267,7 +270,7 @@ statusSelect = "SELECT status FROM user WHERE id = ?"
 
 accountsSelect :: PrepQuery R (Identity [UserId]) AccountRow
 accountsSelect = "SELECT id, name, picture, email, phone, accent_id, assets, \
-                 \activated, status, language, country, provider, \
+                 \activated, status, writetime(status), language, country, provider, \
                  \service, handle \
                  \FROM user WHERE id IN ?"
 
@@ -330,27 +333,29 @@ userPhoneDelete = "UPDATE user SET phone = null WHERE id = ?"
 
 toUserAccount :: Locale -> AccountRow -> UserAccount
 toUserAccount defaultLocale (uid, name, pict, email, phone, accent, assets,
-                             activated, status, lan, con, pid, sid,
+                             activated, status, wtStatus, lan, con, pid, sid,
                              handle) =
     let ident = toIdentity activated email phone
         deleted = maybe False (== Deleted) status
+        expiration = Just False -- wtStatus + 1 day TODO
         loc = toLocale defaultLocale (lan, con)
         svc = newServiceRef <$> sid <*> pid
     in UserAccount (User uid ident name (fromMaybe noPict pict)
-                         (fromMaybe [] assets) accent deleted loc svc handle)
+                         (fromMaybe [] assets) accent deleted loc svc handle expiration)
                    (fromMaybe Active status)
 
 toUsers :: Locale -> [UserRow] -> [User]
 toUsers defaultLocale = fmap mk
   where
     mk (uid, name, pict, email, phone, accent, assets, activated, status,
-        lan, con, pid, sid, handle) =
+        wtStatus, lan, con, pid, sid, handle) =
         let ident = toIdentity activated email phone
             deleted = maybe False (== Deleted) status
+            expiration = Just False -- wtStatus + 1 day TODO
             loc = toLocale defaultLocale (lan, con)
             svc = newServiceRef <$> sid <*> pid
         in User uid ident name (fromMaybe noPict pict) (fromMaybe [] assets)
-                accent deleted loc svc handle
+                accent deleted loc svc handle expiration
 
 toLocale :: Locale -> (Maybe Language, Maybe Country) -> Locale
 toLocale _ (Just l, c) = Locale l c
