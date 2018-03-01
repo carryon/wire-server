@@ -71,13 +71,18 @@ newAccount u inv = do
     defLoc  <- setDefaultLocale <$> view settings
     uid     <- Id <$> maybe (liftIO nextRandom) (return . toUUID) inv
     passwd  <- maybe (return Nothing) (fmap Just . liftIO . mkSafePassword) pass
-    return (UserAccount (user uid $ locale defLoc) Active, passwd)
+    return (UserAccount (user uid $ locale defLoc) status, passwd)
   where
     ident         = newUserIdentity u
     pass          = newUserPassword u
     name          = newUserName u
     pict          = fromMaybe noPict (newUserPict u)
     assets        = newUserAssets u
+    status        = case ident of
+                        Nothing -> -- any user registering without either an email or a phone is Ephemeral,
+                                   -- i.e. deleted after a short amount of time (24h)
+                                   Ephemeral
+                        Just _  -> Active
     colour        = fromMaybe defaultAccentId (newUserAccentId u)
     locale defLoc = fromMaybe defLoc (newUserLocale u)
     user   uid l  = User uid ident name pict assets colour False l Nothing Nothing

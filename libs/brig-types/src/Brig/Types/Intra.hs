@@ -24,6 +24,7 @@ data AccountStatus
     = Active
     | Suspended
     | Deleted
+    | Ephemeral
     deriving Eq
 
 instance FromJSON AccountStatus where
