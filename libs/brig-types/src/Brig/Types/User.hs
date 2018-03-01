@@ -18,12 +18,13 @@ import Data.Aeson.Types (Parser, Pair)
 import Data.ByteString.Conversion
 import Data.Id
 import Data.Int
-import Data.Json.Util ((#))
+import Data.Json.Util ((#), UTCTimeMillis (..))
 import Data.Misc (PlainTextPassword (..))
 import Data.Maybe (isJust)
 import Data.Range
 import Data.Text (Text)
 import Data.Text.Ascii
+import Data.Time (UTCTime)
 import Galley.Types.Bot (ServiceRef)
 import Galley.Types.Teams hiding (userId)
 
@@ -104,8 +105,6 @@ publicProfile u = (connectedProfile u)
     { profileLocale = Nothing
     }
 
-type ExpirationTime = Int64 -- TODO what should that type be?
-
 -- | The data of an existing user.
 data User = User
     { userId       :: !UserId
@@ -120,7 +119,9 @@ data User = User
         -- ^ Set if the user represents an external service,
         -- i.e. it is a "bot".
     , userHandle   :: !(Maybe Handle)
-    , userExpire   :: !(Maybe ExpirationTime)
+    , userExpire   :: !(Maybe UTCTime)
+        -- ^ Set if the user is ephemeral
+        --TODO: add expire to UserProfile/other Profiles
     }
 
 userEmail :: User -> Maybe Email
@@ -158,6 +159,7 @@ instance ToJSON User where
         # "locale"    .= userLocale u
         # "service"   .= userService u
         # "handle"    .= userHandle u
+        # "expire"    .= (UTCTimeMillis <$> userExpire u)
         # []
 
 instance FromJSON User where

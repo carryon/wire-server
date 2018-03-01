@@ -37,7 +37,7 @@ module Brig.Data.User
     , updateHandle
     ) where
 
-import Brig.App (AppIO, settings)
+import Brig.App (AppIO, settings, zauthEnv)
 import Brig.Data.Instances ()
 import Brig.Options
 import Brig.Password
@@ -52,9 +52,12 @@ import Control.Monad.Trans.Class
 import Data.Foldable (for_)
 import Data.Id
 import Data.Int
+import Data.Time (UTCTime)
 import Data.Misc (PlainTextPassword (..))
 import Data.UUID.V4
 import Galley.Types.Bot
+
+import qualified Brig.ZAuth as ZAuth
 
 -- | Authentication errors.
 data AuthError
@@ -216,7 +219,9 @@ lookupAuth u = fmap f <$> retry x1 (query1 authSelect (params Quorum (Identity u
 lookupUsers :: [UserId] -> AppIO [User]
 lookupUsers usrs = do
     loc <- setDefaultLocale  <$> view settings
-    toUsers loc <$> retry x1 (query usersSelect (params Quorum (Identity usrs)))
+    zauthEnv <- view zauthEnv
+    let ZAuth.SessionTokenTimeout ttl = zauthEnv^.ZAuth.settings.ZAuth.sessionTokenTimeout
+    toUsers loc ttl <$> retry x1 (query usersSelect (params Quorum (Identity usrs)))
 
 lookupAccount :: UserId -> AppIO (Maybe UserAccount)
 lookupAccount u = listToMaybe <$> lookupAccounts [u]
@@ -224,7 +229,9 @@ lookupAccount u = listToMaybe <$> lookupAccounts [u]
 lookupAccounts :: [UserId] -> AppIO [UserAccount]
 lookupAccounts usrs = do
     loc <- setDefaultLocale  <$> view settings
-    fmap (toUserAccount loc) <$> retry x1 (query accountsSelect (params Quorum (Identity usrs)))
+    zauthEnv <- view zauthEnv
+    let ZAuth.SessionTokenTimeout ttl = zauthEnv^.ZAuth.settings.ZAuth.sessionTokenTimeout
+    fmap (toUserAccount loc ttl) <$> retry x1 (query accountsSelect (params Quorum (Identity usrs)))
 
 -------------------------------------------------------------------------------
 -- Queries
@@ -331,31 +338,34 @@ userPhoneDelete = "UPDATE user SET phone = null WHERE id = ?"
 -------------------------------------------------------------------------------
 -- Conversions
 
-toUserAccount :: Locale -> AccountRow -> UserAccount
-toUserAccount defaultLocale (uid, name, pict, email, phone, accent, assets,
+toUserAccount :: Locale -> Integer -> AccountRow -> UserAccount
+toUserAccount defaultLocale ttl (uid, name, pict, email, phone, accent, assets,
                              activated, status, wtStatus, lan, con, pid, sid,
                              handle) =
     let ident = toIdentity activated email phone
         deleted = maybe False (== Deleted) status
-        expiration = Just False -- wtStatus + 1 day TODO
+        expiration = if status == Just Ephemeral then (expireTime ttl) <$> wtStatus else Nothing
         loc = toLocale defaultLocale (lan, con)
         svc = newServiceRef <$> sid <*> pid
     in UserAccount (User uid ident name (fromMaybe noPict pict)
                          (fromMaybe [] assets) accent deleted loc svc handle expiration)
                    (fromMaybe Active status)
 
-toUsers :: Locale -> [UserRow] -> [User]
-toUsers defaultLocale = fmap mk
+toUsers :: Locale -> Integer -> [UserRow] -> [User]
+toUsers defaultLocale ttl = fmap mk
   where
     mk (uid, name, pict, email, phone, accent, assets, activated, status,
         wtStatus, lan, con, pid, sid, handle) =
         let ident = toIdentity activated email phone
             deleted = maybe False (== Deleted) status
-            expiration = Just False -- wtStatus + 1 day TODO
+            expiration = if status == Just Ephemeral then (expireTime ttl) <$> wtStatus else Nothing
             loc = toLocale defaultLocale (lan, con)
             svc = newServiceRef <$> sid <*> pid
         in User uid ident name (fromMaybe noPict pict) (fromMaybe [] assets)
                 accent deleted loc svc handle expiration
+
+expireTime :: Integer -> Int64 -> UTCTime
+expireTime ttlInSeconds creationInMicroSeconds = undefined -- TODO
 
 toLocale :: Locale -> (Maybe Language, Maybe Country) -> Locale
 toLocale _ (Just l, c) = Locale l c
