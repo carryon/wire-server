@@ -110,11 +110,14 @@ authenticate u pw = lift (lookupAuth u) >>= \case
 -- reauthentication is a no-op.
 reauthenticate :: (MonadClient m) => UserId -> Maybe PlainTextPassword -> ExceptT ReAuthError m ()
 reauthenticate u pw = lift (lookupAuth u) >>= \case
-    Nothing                   -> throwE (ReAuthError AuthInvalidUser)
-    Just (_,         Deleted) -> throwE (ReAuthError AuthInvalidUser)
-    Just (_,       Suspended) -> throwE (ReAuthError AuthSuspended)
-    Just (Nothing,         _) -> for_ pw $ const (throwE $ ReAuthError AuthInvalidCredentials)
-    Just (Just pw',   s) | s `elem` [Active, Ephemeral] -> case pw of
+    Nothing                    -> throwE (ReAuthError AuthInvalidUser)
+    Just (_,          Deleted) -> throwE (ReAuthError AuthInvalidUser)
+    Just (_,        Suspended) -> throwE (ReAuthError AuthSuspended)
+    Just (Nothing,          _) -> for_ pw $ const (throwE $ ReAuthError AuthInvalidCredentials)
+    Just (Just pw',    Active) -> maybeReAuth pw'
+    Just (Just pw', Ephemeral) -> maybeReAuth pw'
+  where
+    maybeReAuth pw' = case pw of
         Nothing -> throwE ReAuthMissingPassword
         Just  p ->
             unless (verifyPassword p pw') $

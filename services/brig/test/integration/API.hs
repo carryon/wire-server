@@ -32,6 +32,7 @@ import Data.Foldable (for_)
 import Data.Maybe
 import Data.Misc (PlainTextPassword(..))
 import Data.Monoid ((<>))
+import Data.Time (UTCTime)
 import Data.Range (unsafeRange)
 import Data.Text (Text)
 import Data.Vector (Vector)
@@ -74,6 +75,7 @@ tests conf p b c g localAWS = do
             , test p "post /register - 201"                     $ testCreateUser b g
             , test p "post /register - 201 + no email"          $ testCreateUserNoEmailNoPassword b
             , test p "post /register - 201 anonymous"           $ testCreateUserAnon b g
+            , test p "anonymous expiry"                         $ testAnonUser b
             , test p "post /register - 201 pending"             $ testCreateUserPending b
             , test p "post /register - 201 existing activation" $ testCreateAccountPendingActivationKey b
             , test p "post /register - 409 conflict"            $ testCreateUserConflict b
@@ -446,6 +448,27 @@ testMultipleUsers brig = do
 
     field :: FromJSON a => Text -> Value -> Maybe a
     field f u = u ^? key f >>= maybeFromJSON
+
+
+testAnonUser :: Brig -> Http ()
+testAnonUser b = do
+    u1 <- randomUser b
+    alice <- randomUser b
+    bob <- createAnonUser "bob" b
+    resAlice <- get (b . zUser (userId u1) . paths ["users", toByteString' (userId alice)]) <!! const 200 === statusCode
+    resBob <- get (b . zUser (userId u1) . paths ["users", toByteString' (userId bob)]) <!! const 200 === statusCode
+    unless (null (expire resAlice)) $
+        liftIO $ assertFailure "Regular user should not have any expiry"
+    case expire resBob of
+        Nothing -> liftIO $ assertFailure "Anon/ephemeral user must have an expiry"
+        Just _ -> return () --TODO assert ~ 1 day in the future
+  where
+    expire :: ResponseLBS -> Maybe UTCTime
+    expire r = join $ field "expire" <$> decodeBody r
+
+    field :: FromJSON a => Text -> Value -> Maybe a
+    field f u = u ^? key f >>= maybeFromJSON
+
 
 testUserUpdate :: Brig -> Cannon -> Http ()
 testUserUpdate brig cannon = do

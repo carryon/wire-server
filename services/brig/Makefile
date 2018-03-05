@@ -96,10 +96,10 @@ fast:
 
 .PHONY: test
 test: fast
-	LOG_LEVEL=Info keiretsu --run '$(EXE_IT)' --env $(KEIRETSU_ENV)
+	LOG_LEVEL=Info keiretsu --run '$(EXE_IT)' --env $(KEIRETSU_ENV) --delay 3000
 
 test-%: fast
-	LOG_LEVEL=Info keiretsu --run '$(EXE_IT) --pattern="$*"' --env $(KEIRETSU_ENV)
+	LOG_LEVEL=Info keiretsu --run '$(EXE_IT) --pattern="$*"' --env $(KEIRETSU_ENV) --delay 3000
 
 
 .PHONY: db
