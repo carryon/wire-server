@@ -50,6 +50,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Data.Foldable (for_)
+import Data.Time.Clock.POSIX
 import Data.Id
 import Data.Int
 import Data.Time (UTCTime)
@@ -64,6 +65,7 @@ data AuthError
     = AuthInvalidUser
     | AuthInvalidCredentials
     | AuthSuspended
+    | AuthEphemeral
 
 -- | Re-authentication errors.
 data ReAuthError
@@ -97,6 +99,7 @@ authenticate u pw = lift (lookupAuth u) >>= \case
     Nothing                   -> throwE AuthInvalidUser
     Just (_,         Deleted) -> throwE AuthInvalidUser
     Just (_,       Suspended) -> throwE AuthSuspended
+    Just (_,       Ephemeral) -> throwE AuthEphemeral
     Just (Nothing,         _) -> throwE AuthInvalidCredentials
     Just (Just pw',   Active) ->
         unless (verifyPassword pw pw') $
@@ -111,7 +114,7 @@ reauthenticate u pw = lift (lookupAuth u) >>= \case
     Just (_,         Deleted) -> throwE (ReAuthError AuthInvalidUser)
     Just (_,       Suspended) -> throwE (ReAuthError AuthSuspended)
     Just (Nothing,         _) -> for_ pw $ const (throwE $ ReAuthError AuthInvalidCredentials)
-    Just (Just pw',   Active) -> case pw of
+    Just (Just pw',   s) | s `elem` [Active, Ephemeral] -> case pw of
         Nothing -> throwE ReAuthMissingPassword
         Just  p ->
             unless (verifyPassword p pw') $
@@ -219,8 +222,8 @@ lookupAuth u = fmap f <$> retry x1 (query1 authSelect (params Quorum (Identity u
 lookupUsers :: [UserId] -> AppIO [User]
 lookupUsers usrs = do
     loc <- setDefaultLocale  <$> view settings
-    zauthEnv <- view zauthEnv
-    let ZAuth.SessionTokenTimeout ttl = zauthEnv^.ZAuth.settings.ZAuth.sessionTokenTimeout
+    e <- view zauthEnv
+    let ZAuth.SessionTokenTimeout ttl = e^.ZAuth.settings.ZAuth.sessionTokenTimeout
     toUsers loc ttl <$> retry x1 (query usersSelect (params Quorum (Identity usrs)))
 
 lookupAccount :: UserId -> AppIO (Maybe UserAccount)
@@ -229,8 +232,8 @@ lookupAccount u = listToMaybe <$> lookupAccounts [u]
 lookupAccounts :: [UserId] -> AppIO [UserAccount]
 lookupAccounts usrs = do
     loc <- setDefaultLocale  <$> view settings
-    zauthEnv <- view zauthEnv
-    let ZAuth.SessionTokenTimeout ttl = zauthEnv^.ZAuth.settings.ZAuth.sessionTokenTimeout
+    e <- view zauthEnv
+    let ZAuth.SessionTokenTimeout ttl = e^.ZAuth.settings.ZAuth.sessionTokenTimeout
     fmap (toUserAccount loc ttl) <$> retry x1 (query accountsSelect (params Quorum (Identity usrs)))
 
 -------------------------------------------------------------------------------
@@ -344,7 +347,7 @@ toUserAccount defaultLocale ttl (uid, name, pict, email, phone, accent, assets,
                              handle) =
     let ident = toIdentity activated email phone
         deleted = maybe False (== Deleted) status
-        expiration = if status == Just Ephemeral then (expireTime ttl) <$> wtStatus else Nothing
+        expiration = if status == Just Ephemeral then expireTime ttl <$> wtStatus else Nothing
         loc = toLocale defaultLocale (lan, con)
         svc = newServiceRef <$> sid <*> pid
     in UserAccount (User uid ident name (fromMaybe noPict pict)
@@ -358,14 +361,17 @@ toUsers defaultLocale ttl = fmap mk
         wtStatus, lan, con, pid, sid, handle) =
         let ident = toIdentity activated email phone
             deleted = maybe False (== Deleted) status
-            expiration = if status == Just Ephemeral then (expireTime ttl) <$> wtStatus else Nothing
+            expiration = if status == Just Ephemeral then expireTime ttl <$> wtStatus else Nothing
             loc = toLocale defaultLocale (lan, con)
             svc = newServiceRef <$> sid <*> pid
         in User uid ident name (fromMaybe noPict pict) (fromMaybe [] assets)
                 accent deleted loc svc handle expiration
 
 expireTime :: Integer -> Int64 -> UTCTime
-expireTime ttlInSeconds creationInMicroSeconds = undefined -- TODO
+expireTime ttlInSeconds creationInMicroSeconds =
+    let creationInSeconds = creationInMicroSeconds `div` 1000000
+        expirySeconds = fromIntegral creationInSeconds + ttlInSeconds
+    in posixSecondsToUTCTime $ fromInteger expirySeconds
 
 toLocale :: Locale -> (Maybe Language, Maybe Country) -> Locale
 toLocale _ (Just l, c) = Locale l c

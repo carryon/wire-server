@@ -17,7 +17,6 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, Pair)
 import Data.ByteString.Conversion
 import Data.Id
-import Data.Int
 import Data.Json.Util ((#), UTCTimeMillis (..))
 import Data.Misc (PlainTextPassword (..))
 import Data.Maybe (isJust)
